@@ -2,7 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
-#include "lib/kernel/hash.h"
+#include "hash.h"
 
 enum vm_type {
 	/* page not initialized */
@@ -50,6 +50,8 @@ struct page {
 	/* Your implementation */
 	struct hash_elem spt_hash_elem;
 
+	bool writable;
+
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union {
@@ -66,6 +68,7 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_elem;
 };
 
 /* The function table for page operations.

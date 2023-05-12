@@ -4,6 +4,7 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 
+struct list frame_table;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -117,9 +118,12 @@ static struct frame *
 vm_get_frame (void) {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
+	frame->kva = palloc_get_page(PAL_USER);
 
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
+	list_push_back(&frame_table, &frame->frame_elem);
+	frame->page = NULL;
 	return frame;
 }
 
@@ -172,8 +176,10 @@ vm_do_claim_page (struct page *page) {
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-
-	return swap_in (page, frame->kva);
+	if(install_page(page->va, frame->kva, page->writable)) {
+		return swap_in(page, frame->kva);
+	}
+	return false;
 }
 
 /* Initialize new supplemental page table */
@@ -225,5 +231,4 @@ bool page_delete(struct hash *h, struct page *p) {
 	}
 	else
 		return false;
-
 }
