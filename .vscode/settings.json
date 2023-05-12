@@ -1,8 +1,10 @@
 {
   "files.associations": {
+    "*.html": "html",
     "*.c": "c",
     "list.h": "c",
     "synch.h": "c",
-    "process.h": "c"
+    "process.h": "c",
+    "hash.h": "c"
   }
 }

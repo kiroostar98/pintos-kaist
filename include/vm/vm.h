@@ -44,7 +44,8 @@ struct page {
 	const struct page_operations *operations;
 	void *va;              /* Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
-
+	struct hash_elem spt_hash_elem;
+	bool writable;
 	/* Your implementation */
 
 	/* Per-type data are binded into the union.
@@ -59,10 +60,17 @@ struct page {
 	};
 };
 
+//supplemental page table 선언
+struct supplemental_page_table
+{
+	struct hash spt_hash;  	//해쉬 구조체 선언
+};
+
 /* The representation of "frame" */
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_elem;
 };
 
 /* The function table for page operations.
@@ -85,6 +93,7 @@ struct page_operations {
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
 struct supplemental_page_table {
+	 struct hash spt_hash;
 };
 
 #include "threads/thread.h"
