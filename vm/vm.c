@@ -80,9 +80,12 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 bool
 spt_insert_page (struct supplemental_page_table *spt UNUSED,
 		struct page *page UNUSED) {
-	//int succ = false;
+	int succ = false;
 	/* TODO: Fill this function. */
-	return page_insert(&spt->spt_hash, page);
+	if (!hash_insert(&spt->spt_hash, &page->spt_hash_elem)) {
+		succ = false;
+	}
+	return succ;
 }
 
 void
@@ -118,7 +121,9 @@ static struct frame *
 vm_get_frame (void) {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
-	frame->kva = palloc_get_page(PAL_USER);
+	// 위에 palloc 하라고 했는데 palloc으로 하면 안되는 이유..?
+	// frame->kva = palloc_get_page(PAL_USER);
+	struct frame *frame = (struct frame *)malloc(sizeof(struct frame));
 
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
@@ -162,7 +167,7 @@ bool
 vm_claim_page (void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function */
-
+	page = spt_find_page(&thread_current()->spt, va);
 	return vm_do_claim_page (page);
 }
 
@@ -176,8 +181,8 @@ vm_do_claim_page (struct page *page) {
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-	if(install_page(page->va, frame->kva, page->writable)) {
-		return swap_in(page, frame->kva);
+	if(install_page(page->va, frame->kva, page->writable)) { // mapping va and frame
+		return swap_in(page, frame->kva); // disk to memory
 	}
 	return false;
 }
