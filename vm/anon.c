@@ -27,10 +27,22 @@ vm_anon_init (void) {
 /* Initialize the file mapping */
 bool
 anon_initializer (struct page *page, enum vm_type type, void *kva) {
+	/* page struct 안의 Union 영역은 현재 uninit page이다.
+		ANON page를 초기화해주기 위해 해당 데이터를 모두 0으로 초기화해준다.
+		Q. 이렇게 하면 Union 영역은 모두 다 0으로 초기화되나? -> 맞다. */
+	
+	// 기존에 있던 코드 삭제 ?!
+	// struct uninit_page *uninit = &page->uninit;
+	// memset(uninit, 0, sizeof(struct uninit_page));
+
 	/* Set up the handler */
 	page->operations = &anon_ops;
-
 	struct anon_page *anon_page = &page->anon;
+	anon_page->swap_sec = -1; // ??????
+    // anon_page->sec_no = SIZE_MAX;
+    // anon_page->thread = thread_current();
+
+	return true;
 }
 
 /* Swap in the page by read contents from the swap disk. */
