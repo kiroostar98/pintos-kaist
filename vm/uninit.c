@@ -43,7 +43,7 @@ uninit_new (struct page *page, void *va, vm_initializer *init,
 }
 
 /* Initalize the page on first fault */
-static bool
+static bool		//uninit_page에 접근하면 page fault가 발생하면서 page fault handler가 작동하고 swap_in 함수에서 이 함수를 호출해주게 된다.
 uninit_initialize (struct page *page, void *kva) {
 	struct uninit_page *uninit = &page->uninit;
 

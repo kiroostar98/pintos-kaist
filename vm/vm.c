@@ -9,15 +9,17 @@ struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void
-vm_init (void) {
+vm_init (void) {	//부팅이 시작될 때 호출되는 함수
 	vm_anon_init ();
 	vm_file_init ();
 #ifdef EFILESYS  /* For project 4 */
 	pagecache_init ();
 #endif
 	register_inspect_intr ();
+	list_init(&frame_table);
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
+
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -42,7 +44,8 @@ static struct frame *vm_evict_frame (void);
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
  * `vm_alloc_page`. */
-bool
+
+bool //load_segment 함수에서 호출
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {
 
@@ -52,10 +55,25 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 
 	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
+
+		struct page *page = (struct page *)malloc(sizeof(struct page));	//page가 없으니 할당해주기
+		typedef bool (*initializerFunc)(struct page *, enum vm_type, void *);
+		initializerFunc initializer = NULL;
+
+		switch(VM_TYPE(type)){
+			case VM_ANON:
+				initializer = anon_initializer;
+				break;
+			case VM_FILE:   
+				initializer = file_backed_initializer;
+				break;
+		uninit_new(page, upage, init, type, aux, initializer);
+		page->writable = writable;
+		spt_insert_page(spt, page);
+		}
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. */
-
 		/* TODO: Insert the page into the spt. */
 	}
 err:

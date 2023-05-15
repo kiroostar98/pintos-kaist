@@ -15,4 +15,11 @@ struct file *process_get_file(int fd);
 void process_close_file(int fd);
 struct thread *get_child_process(int pid);
 
+struct container
+	{
+		struct file *file;
+		off_t ofs;
+		size_t read_bytes;
+		size_t zero_bytes;
+	};
 #endif /* userprog/process.h */
