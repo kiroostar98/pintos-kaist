@@ -17,6 +17,7 @@
 #include "threads/thread.h"
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
+#include "threads/thread.h"
 #include "intrinsic.h"
 #ifdef VM
 #include "vm/vm.h"
@@ -742,6 +743,15 @@ install_page(void *upage, void *kpage, bool writable)
 	return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
 }
 
+
+
+
+
+#else
+/* From here, codes will be used after project 3.
+ * If you want to implement the function for only project 2, implement it on the
+ * upper block. */
+
 // 파일 객체에 대한 파일 디스크립터를 생성하는 함수
 int process_add_file(struct file *f)
 {
@@ -797,17 +807,40 @@ struct thread *get_child_process(int pid)
 	return NULL;
 }
 
-#else
-/* From here, codes will be used after project 3.
- * If you want to implement the function for only project 2, implement it on the
- * upper block. */
-
 static bool
 lazy_load_segment(struct page *page, void *aux)
 {
+	// Project 3
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	struct file *file = ((struct container*)aux)->file;
+	off_t offsetof = ((struct container *)aux)->offset;
+	size_t page_read_bytes = ((struct container *)aux)->page_read_bytes;
+	size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+	// 파일의 현재위치를 이동
+	file_seek(file, offsetof);
+
+	// 페이지를 사용하여 파일 시스템의 데이터를 읽어서 페이지에 채워 넣는 작업을 수행
+	// file_read(): 파일 디스크립터 file로부터 page_read_bytes 바이트를 읽어서, page->frame->kva 주소에 저장하는 함수
+	if (file_read(file, page->frame->kva, page_read_bytes) != (int)page_read_bytes){
+		// 만약 읽은 바이트 수가 page_read_bytes와 다르다면, 즉 읽기 도중 문제가 발생하면 할당된 페이지를 해제하고 false를 반환
+		palloc_free_page(page->frame->kva);
+		return false;
+	}
+
+	// 나머지를 0으로 채우는 용도(읽은 데이터 이후의 나머지 페이지를 초기화하여 사용하지 않는 메모리 영역을 0으로 채웁니다. 이를 통해 프로그램의 안정성과 보안을 유지할 수 있습니다.)
+	memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
+	file_seek(file, offsetof);//다시 offset 초기화
+	return true;
+
+	// 만약 lazy loading에 대한 page fault라면 커널은 우리가 이전에 vm_alloc_page_with_initializer 에서 설정해뒀던 initializer 중 한 놈을 호출해 세그먼트에 lazy load한다.
+	// ...
+	// lazy_load_segment는 load_segment 에 있는 vm_alloc_page_with_initializer의 네 번째 인자로서 제공된다. 
+	// 이 함수는 실행파일의 페이지를 위한 initializer이고 page fault 시 호출된다. 
+	// 이 함수는 페이지 구조체와 aux를 인자로 받는다. aux는 load_segment에서 우리가 설정한 정보이다. 
+	// 이 정보를 사용해, 우리는 세그먼트를 읽을 파일을 찾아야 하고 결국 메모리로부터 세그먼트를 읽어야 한다.
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -828,28 +861,55 @@ static bool
 load_segment(struct file *file, off_t ofs, uint8_t *upage,
 			 uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
+	/*
+		함수의 목적 : 이 함수는 파일 시스템으로부터 파일을 읽어 가상 메모리에 로드하는 역할
+		load_segment 함수는 파일의 내용을 메모리에 로드하기 위한 가상 페이지들을 할당하고, 그 가상 페이지에 파일의 일부를 읽어오는 작업을 반복하면서 
+		페이지 폴트를 처리합니다. 이 때, vm_alloc_page_with_initializer는 페이지 폴트가 발생하면 해당 페이지를 실제로 메모리에 할당하고, 
+		파일에서 해당 페이지에 해당하는 내용을 읽어오기 위해 lazy_load_segment 함수를 호출
+	*/
+	
+	/* 
+		file: 읽어들일 파일을 가리키는 파일 포인터입니다.
+		ofs: 파일에서 읽을 시작 위치입니다. 보통 0으로 설정됩니다.
+		upage: 가상 주소 공간에서 파일의 내용을 로드할 페이지를 가리키는 포인터입니다.
+		read_bytes: 파일에서 읽을 바이트 수입니다.
+		zero_bytes: 0으로 채울 바이트 수입니다.
+		writable: 페이지를 읽기/쓰기 가능하도록 설정할지 여부를 결정하는 플래그입니다.
+	*/
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
 
 	while (read_bytes > 0 || zero_bytes > 0)
 	{
-		/* Do calculate how to fill this page.
-		 * We will read PAGE_READ_BYTES bytes from FILE
-		 * and zero the final PAGE_ZERO_BYTES bytes. */
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
-											writable, lazy_load_segment, aux))
+		// Project 3
+		// load_segment 는 vm_alloc_page_with_initializer가 보류 중인 페이지 객체를 만들기 위해 호출한다. 
+		// page fault가 일어나면 이것은 파일에서 세그먼트가 실제로 load되는 경우다.
+		// 현재 코드는 파일에서 읽을 바이트 수와 메인 루프 내에서 0으로 채울 바이트 수를 계산한다. 그리고서 pending object를 
+		// 생성하기 위해 vm_alloc_page_with_initializer 를 호출한다. 우리는 보조값으로 aux 인자를 세팅할 필요가 있다. 
+		// 이 aux 인자는 vm_alloc_page_with_initializer 에 제공할 것이다. 우리는 구조체를 생성하기를 원할 것인데, 이 구조체는 바이너리 로딩에 필요한 정보를 담고 있다.
+
+		// void *aux = NULL;
+		struct container *container = (struct container*)malloc(sizeof(struct container));
+		container->file = file;
+		container->page_read_bytes = page_read_bytes;
+		container->offset = ofs;
+
+		// 여기서 주목해야 할 점은 해당 페이지의 init 멤버로 lazy_load_segment()가 들어간다는 것이다. 
+		// 뒤에 페이지 폴트가 뜨고 만약 이 페이지가 들어 있는 segment가 메모리에 로드되지 않은 상황이라면 해당 함수가 실행이 되면서 segment도 메모리에 lazy loading된다.
+		// lazy_load_segment 함수는 주어진 container 구조체를 사용하여 해당 페이지를 메모리에 로드 후 해당 페이지에 복사
+		if (!vm_alloc_page_with_initializer(VM_ANON, upage,	writable, lazy_load_segment, container))
 			return false;
 
 		/* Advance. */
+		// while 루프를 반복하는 동안 파일에서 로드해야하는 데이터를 추적하고, 메모리에서 사용해야하는 공간을 추적 
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -861,11 +921,29 @@ setup_stack(struct intr_frame *if_)
 	bool success = false;
 	void *stack_bottom = (void *)(((uint8_t *)USER_STACK) - PGSIZE);
 
+	// Project 3
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
-
+	/* 할 일: 스택을 스택_하단에 매핑하고 즉시 페이지를 소유권을 주장하세요.
+	 * 할 일: 성공하면 그에 따라 rsp를 설정하세요.
+	 * 할 일: 페이지가 스택임을 표시해야 합니다. */
+	/* TODO: 코드가 여기에 있습니다 */
+	// 첫번째 스택 페이지는 lazy하게 할당되지 않아야 한다. 우리는 load time에 커맨드라인 인자와 함께 이 첫 스택 페이지를 할당하고 초기화할 수 있는데, 
+	// 이때 fault가 뜨기를 기다릴 필요가 없다. 우리는 아마 스택을 구분할 방법을 제공할 필요가 있을 것이다. 우리는 보조 마커로 페이지를 마킹하기 위해 vm_type(vm/vm.h)을 사용할 수 있다.
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1)){
+		success = vm_claim_page(stack_bottom);
+		if (success){
+			if_->rsp = USER_STACK;
+			thread_current()->stack_bottom = stack_bottom;
+			/*
+				Pintos에서는 struct thread에 stack_bottom 필드를 추가하여 스택의 시작 주소를 추적하고 
+				스택 공간이 할당되고 사용되는 메모리 주소 범위를 추적합니다. 이렇게 함으로써 스택 공간이 할당되고 
+				사용되는 메모리 주소 범위를 추적할 수 있습니다.
+			*/
+		}
+	}
 	return success;
 }
 #endif /* VM */
