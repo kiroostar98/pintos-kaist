@@ -45,6 +45,9 @@ uninit_new (struct page *page, void *va, vm_initializer *init,
 /* Initalize the page on first fault */
 static bool
 uninit_initialize (struct page *page, void *kva) {
+	// *** 함수의 역할 ***
+	// UNINIT 페이지의 멤버를 초기화해줌으로써 페이지 타입을 인자로 주어진 
+	// 타입(ANON, FILE, PAGE_CACHE)으로 변환시켜준다. 그리고 해당 segment가 load되지 않은 상태면 lazy load segment도 진행한다. 
 	struct uninit_page *uninit = &page->uninit;
 
 	/* Fetch first, page_initialize may overwrite the values */
@@ -52,8 +55,19 @@ uninit_initialize (struct page *page, void *kva) {
 	void *aux = uninit->aux;
 
 	/* TODO: You may need to fix this function. */
-	return uninit->page_initializer (page, uninit->type, kva) &&
-		(init ? init (page, aux) : true);
+	// 필요에 따라 vm/anon.c에 있는 vm_anon_init이나 anon_initializer를 수정할 수 있다.
+	// 구현해야함(Lazy Loading for Executable)
+	/*
+		page fault handler는 콜 체인을 따르는데 swap_in을 호출하면 최종적으로 uninit_initialize에 도달한다. 
+		이미 완성된 구현을 제공한다. 허나, 우리는 우리의 설계에 맞게 uninit_initialize를 수정해야 할 필요가 있다.
+		첫 fault가 난 페이지를 초기화한다. 템플릿 코드는 처음에 vm_initializer와 aux를 수정한다. 
+		그 다음 함수 포인터를 통해 대응하는 page_initializer를 호출한다. 우리는 아마 이 함수를 우리 설계에 맞게 수정해야 할 필요가 있을 것이다.
+		...
+		해당 페이지 타입에 맞도록 페이지를 초기화한다.
+		만약 해당 페이지의 segment가 load되지 않은 상태면 lazy load해준다.
+		init이 lazy_load_segmet일때에 해당. 
+	*/
+	return uninit->page_initializer (page, uninit->type, kva) && (init ? init (page, aux) : true);
 }
 
 /* Free the resources hold by uninit_page. Although most of pages are transmuted

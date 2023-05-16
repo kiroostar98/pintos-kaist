@@ -191,6 +191,12 @@ vm_get_frame (void) {
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+    ASSERT((uintptr_t)USER_STACK - (uintptr_t)addr <= (1 << 20));
+
+    while (vm_alloc_page(VM_ANON, addr, true)) {
+        vm_claim_page(addr);
+        thread_current()->stack_bottom -= PGSIZE;
+    }
 }
 
 /* Handle the fault on write_protected page */
@@ -209,15 +215,25 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user U
 	// 유효한 page fault인지를 가장 먼저 체크한다. “유효”하다는 것은 곧 유효하지 않은 접근 오류를 뜻한다. 만약 가짜 fault라면, 일부 내용을 페이지에 올리고 제어권을 사용자 프로그램에 반환한다.
 	// fault가 뜬 주소와 대응하는 페이지 구조체를 해결한다. 이는 spt_find_page 함수를 통해 spt를 조사함으로써 이뤄진다.
 
+	if (not_present == false){
+		return false;
+	}
+
 	if (addr == NULL | is_kernel_vaddr(addr))
 	{
 		return false;
 	}
 
 	page = spt_find_page(spt, addr);
-	if (page == NULL){
-		return false;
-	}
+    if (page == NULL) {
+        struct thread *current_thread = thread_current();
+        void *stack_bottom = pg_round_down(thread_current()->rsp_stack);
+        if (write && (addr >= pg_round_down(thread_current()->rsp_stack - PGSIZE)) && (addr < USER_STACK)) {
+            vm_stack_growth(addr);
+            return true;
+        }
+        return false;
+    }
 
 	if (write && !page->writable){
 		return false;
@@ -273,8 +289,44 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 
 /* Copy supplemental page table from src to dst */
 bool
-supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
-		struct supplemental_page_table *src UNUSED) {
+supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED, struct supplemental_page_table *src UNUSED) {
+	// 해시테이블을 순회하기 위해 필요한 구조체
+	struct hash_iterator i;
+	/* 1. SRC의 해시 테이블의 각 bucket 내 elem들을 모두 복사한다. */
+	hash_first(&i, &src->spt_hash);
+	while (hash_next(&i)){ // src의 각각의 페이지를 반복문을 통해 복사
+		struct page *parent_page = hash_entry (hash_cur (&i), struct page, spt_hash_elem);   // 현재 해시 테이블의 element 리턴
+		enum vm_type type = page_get_type(parent_page);		// 부모 페이지의 type
+    	void *upage = parent_page->va;				    		// 부모 페이지의 가상 주소
+      	bool writable = parent_page->writable;				// 부모 페이지의 쓰기 가능 여부
+      	vm_initializer *init = parent_page->uninit.init;	// 부모의 초기화되지 않은 페이지들 할당 위해 
+      	void* aux = parent_page->uninit.aux;
+
+		// 부모 타입이 uninit인 경우
+      	if(parent_page->operations->type == VM_UNINIT) { 
+        	if(!vm_alloc_page_with_initializer(type, upage, writable, init, aux))
+				// 자식 프로세스의 유저 메모리에 UNINIT 페이지를 하나 만들고 SPT 삽입.
+            	return false;
+      	}
+      	else {  // 즉, else문의 코드는 실제 부모의 물리메모리에 매핑되어있던 데이터는 없는상태이다 그래서 아래에서 memcpy로 부모의 데이터 또한 복사해 넣어준다.
+        	if(!vm_alloc_page(type, upage, writable)) // type에 맞는 페이지 만들고 SPT 삽입.
+            	return false;
+          	if(!vm_claim_page(upage))  // 바로 물리 메모리와 매핑하고 Initialize한다.
+              	return false;
+      	}
+
+		// UNIT이 아닌 모든 페이지에 대응하는 물리 메모리 데이터를 부모로부터 memcpy
+      	if (parent_page->operations->type != VM_UNINIT) { 
+        	struct page* child_page = spt_find_page(dst, upage);
+          	memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE);
+      	}
+  	}
+  return true;	
+}
+
+static void spt_destroy_func(struct hash_elem *e, void *aux) {
+    const struct page *pg = hash_entry(e, struct page, spt_hash_elem);
+    vm_dealloc_page(pg);
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -282,6 +334,9 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	// Supplemental Page Table이 소유하고 있던 모든 자원들을 다 free시킨다. 이 함수는 process_exit()에서 호출이 된다.
+	// Supplemental Page Table 내의 모든 페이지 엔트리들을 방문해서 hash_destroy()를 수행한다. SPT 말고 PML4와 palloc된 물리 메모리는 이 함수 밖에서 프로세스가 없애준다.
+	hash_destroy(&spt->spt_hash, spt_destroy_func);
 }
 
 /* Returns a hash value for page p. */
