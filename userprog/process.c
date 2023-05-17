@@ -19,6 +19,7 @@
 #include "threads/vaddr.h"
 #include "threads/thread.h"
 #include "intrinsic.h"
+#include "userprog/syscall.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -249,8 +250,11 @@ int process_exec(void *f_name)
 	for (token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
 		parse[count++] = token;
 
+	lock_acquire(&filesys_lock);
 	/* And then load the binary */
 	success = load(file_name, &_if);
+	lock_release(&filesys_lock);
+
 	// 이진 파일을 디스크에서 메모리로 로드한다.
 	// 이진 파일에서 실행하려는 명령의 위치를 얻고 (if_.rip)
 	// user stack의 top 포인터를 얻는다. (if_.rsp)

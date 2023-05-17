@@ -7,6 +7,7 @@
 #include "hash.h"
 #include "include/userprog/process.h"
 #include "threads/mmu.h"
+#define USER_STK_LIMIT (1 << 20)
 
 unsigned page_hash (const struct hash_elem *p_, void *aux UNUSED);
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED);
@@ -191,12 +192,8 @@ vm_get_frame (void) {
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
-    ASSERT((uintptr_t)USER_STACK - (uintptr_t)addr <= (1 << 20));
-
-    while (vm_alloc_page(VM_ANON, addr, true)) {
-        vm_claim_page(addr);
-        thread_current()->stack_bottom -= PGSIZE;
-    }
+	// anonymous페이지를 할당하여 스택 크기를 늘림
+    vm_alloc_page_with_initializer(VM_ANON, pg_round_down(addr), 1, NULL, NULL);
 }
 
 /* Handle the fault on write_protected page */
@@ -207,39 +204,33 @@ vm_handle_wp (struct page *page UNUSED) {
 /* Return true on success */
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	// Project 3
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
+	struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
 	struct page *page = NULL;
+	uintptr_t rsp;
+	/* TODO: Validate the fault */
+	/* if문으로 not present인지 확인 -> find page*/
+	/* TODO: Your code goes here */
+	if (not_present) {
+		rsp = (user == true)? f->rsp : thread_current()->user_rsp;
+		if (USER_STACK - USER_STK_LIMIT <= rsp - 8 && rsp - 8 <= addr && addr <= USER_STACK) {
+			vm_stack_growth(addr);
+		}
+		
+		page = spt_find_page(spt, addr);
+		if (page == NULL)
+			return false;
 
-	// 구현해야함
-	// 유효한 page fault인지를 가장 먼저 체크한다. “유효”하다는 것은 곧 유효하지 않은 접근 오류를 뜻한다. 만약 가짜 fault라면, 일부 내용을 페이지에 올리고 제어권을 사용자 프로그램에 반환한다.
-	// fault가 뜬 주소와 대응하는 페이지 구조체를 해결한다. 이는 spt_find_page 함수를 통해 spt를 조사함으로써 이뤄진다.
+		if (write == 1 && page->writable == 0)
+			return false;
 
-	if (not_present == false){
-		return false;
+		return vm_do_claim_page(page);
 	}
+	/*이 함수에서는 Page Fault가 스택을 증가시켜야하는 경우에 해당하는지 아닌지를 확인해야 합니다.
+	스택 증가로 Page Fault 예외를 처리할 수 있는지 확인한 경우, 
+	Page Fault가 발생한 주소로 vm_stack_growth를 호출합니다.*/
+	/* rsp-8 <= addr <= user_stack이면  */
 
-	if (addr == NULL | is_kernel_vaddr(addr))
-	{
-		return false;
-	}
-
-	page = spt_find_page(spt, addr);
-    if (page == NULL) {
-        struct thread *current_thread = thread_current();
-        void *stack_bottom = pg_round_down(thread_current()->rsp_stack);
-        if (write && (addr >= pg_round_down(thread_current()->rsp_stack - PGSIZE)) && (addr < USER_STACK)) {
-            vm_stack_growth(addr);
-            return true;
-        }
-        return false;
-    }
-
-	if (write && !page->writable){
-		return false;
-	}
-
-    return vm_do_claim_page(page);
+	return false;
 }
 
 /* Free the page.

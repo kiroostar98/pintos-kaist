@@ -17,9 +17,9 @@
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
-// void check_address(void *addr);
-struct page* check_address(void *addr);
-void check_valid_buffer(void* buffer, unsigned size, bool to_write);
+void check_address(void *addr);
+// struct page* check_address(void *addr);
+// void check_valid_buffer(void* buffer, unsigned size, bool to_write);
 void halt(void);
 void exit(int status);
 bool create(const char *file, unsigned initial_size);
@@ -66,7 +66,7 @@ void syscall_init(void)
 void syscall_handler(struct intr_frame *f UNUSED)
 {
 	int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
-	thread_current()->rsp_stack = f->rsp;
+	thread_current()->user_rsp = f->rsp;
 	switch (syscall_n)
 	{
 	case SYS_HALT:
@@ -97,11 +97,11 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		f->R.rax = filesize(f->R.rdi);
 		break;
 	case SYS_READ:
-		check_valid_buffer(f->R.rsi, f->R.rdx, 1);
+		// check_valid_buffer(f->R.rsi, f->R.rdx, 1);
 		f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_WRITE:
-		check_valid_buffer(f->R.rsi, f->R.rdx, 0);
+		// check_valid_buffer(f->R.rsi, f->R.rdx, 0);
 		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_SEEK:
@@ -116,39 +116,39 @@ void syscall_handler(struct intr_frame *f UNUSED)
 }
 
 /* Project2-2 User Memory Access */
-// void check_address(void *addr)
-// {
-// 	if (addr == NULL)
-// 		exit(-1);
-// 	if (!is_user_vaddr(addr))
-// 		exit(-1);
-// 	if (pml4_get_page(thread_current()->pml4, addr) == NULL)
-// 		exit(-1);
-// }
+void check_address(void *addr)
+{
+	if (addr == NULL)
+		exit(-1);
+	if (!is_user_vaddr(addr))
+		exit(-1);
+	// if (pml4_get_page(thread_current()->pml4, addr) == NULL)
+	// 	exit(-1);
+}
 
 /* Project3  */
-struct page * check_address(void * addr) {
-	if (addr == NULL || is_kernel_vaddr(addr)) {
-		exit(-1);
-	}
+// struct page * check_address(void * addr) {
+// 	if (addr == NULL || is_kernel_vaddr(addr)) {
+// 		exit(-1);
+// 	}
 
-	return spt_find_page(&thread_current()->spt, addr);
-}
+// 	return spt_find_page(&thread_current()->spt, addr);
+// }
 
-void check_valid_buffer(void* buffer, unsigned size, bool to_write){
-	/* 버퍼 내의 시작부터 끝까지의 각 주소를 모두 check_address*/
-	for (int i = 0; i < size; i++){
-		struct page* page = check_address(buffer + i); 
+// void check_valid_buffer(void* buffer, unsigned size, bool to_write){
+// 	/* 버퍼 내의 시작부터 끝까지의 각 주소를 모두 check_address*/
+// 	for (int i = 0; i < size; i++){
+// 		struct page* page = check_address(buffer + i); 
 
-		/* 해당 주소가 포함된 페이지가 spt에 없다면 */
-		if(page == NULL)
-			exit(-1);
+// 		/* 해당 주소가 포함된 페이지가 spt에 없다면 */
+// 		if(page == NULL)
+// 			exit(-1);
 		
-		/* write 시스템 콜을 호출했는데 이 페이지가 쓰기가 허용된 페이지가 아닌 경우 */
-		if(page->writable == false && to_write == true)
-			exit(-1);
-	}
-}
+// 		/* write 시스템 콜을 호출했는데 이 페이지가 쓰기가 허용된 페이지가 아닌 경우 */
+// 		if(page->writable == false && to_write == true)
+// 			exit(-1);
+// 	}
+// }
 
 void halt(void)
 {

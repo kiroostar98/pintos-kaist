@@ -129,7 +129,7 @@ struct thread
 	struct supplemental_page_table spt;
 	void *stack_bottom;
 #endif
-	void *rsp_stack;
+	void *user_rsp;
 
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */
