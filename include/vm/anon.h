@@ -17,7 +17,7 @@ shared 방식은 프로세스 간 통신을 위해 사용되는 anonymous page�
 typedef bool vm_initializer (struct page *, void *aux);
 
 struct anon_page {
-	int swap_sec; // sector where swapped contents are stored.
+	bool (*page_initializer) (struct page *, enum vm_type, void *kva);
 };
 
 void vm_anon_init (void);

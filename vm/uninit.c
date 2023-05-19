@@ -35,7 +35,7 @@ uninit_new (struct page *page, void *va, vm_initializer *init,
 		.frame = NULL, /* no frame for now */
 		.uninit = (struct uninit_page) {
 			.init = init,
-			.type = type,
+			.type = type, // project 3 - anonymous page 과제 기준, load_segment()에서 vm_alloc_page_with_initializer()가 호출될 때 type인자가 VM_ANON이다. 이는 즉 uninit_new()때 type 매개변수로 VM_ANON이 들어온다는 것이다. 고로 현재는 UNINIT이지만 initialize될 때 ANON으로 바뀔 예정이다.
 			.aux = aux,
 			.page_initializer = initializer,
 		}
@@ -71,4 +71,5 @@ uninit_destroy (struct page *page) {
 	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
+	return;
 }

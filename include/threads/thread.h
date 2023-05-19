@@ -128,6 +128,8 @@ struct thread
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
 #endif
+	void *rsp_stack; // stack growth 필요 감지용. 
+	// 시스콜 호출하는 순간 유저가 실행되던 시 rsp 정보를, 문맥 전환 시 유저->커널모드 되서 커널로 넘어왔을 때에도 rsp
 
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */

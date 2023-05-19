@@ -116,8 +116,9 @@ void check_address(void *addr)
 		exit(-1);
 	if (!is_user_vaddr(addr))
 		exit(-1);
-	if (pml4_get_page(thread_current()->pml4, addr) == NULL)
-		exit(-1);
+	// if (pml4_get_page(thread_current()->pml4, addr) == NULL)
+	// 	exit(-1);
+	return spt_find_page(&thread_current()->spt, addr);
 }
 
 void halt(void)
@@ -197,7 +198,7 @@ int read(int fd, void *buffer, unsigned size)
 	int bytes_read = 0;
 
 	lock_acquire(&filesys_lock);
-	if (fd == STDIN_FILENO)
+	if (fd == 0)
 	{
 		for (int i = 0; i < size; i++)
 		{
@@ -231,7 +232,7 @@ int write(int fd, const void *buffer, unsigned size)
 {
 	check_address(buffer);
 	int bytes_write = 0;
-	if (fd == STDOUT_FILENO)
+	if (fd == 1)
 	{
 		putbuf(buffer, size);
 		bytes_write = size;

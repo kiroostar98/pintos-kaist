@@ -565,8 +565,7 @@ load(const char *file_name, struct intr_frame *if_)
 				project 2에서는 page를 직접 할당해서 그 페이지에다 넣어주지만(ifndef로 감싸져 있음) 이때는 가상 메모리가 완전히 구현되지 않은 상황이라 그렇고, 
 				project 3에서 쓰는 load_segment()가 따로 있다. 
 				이 함수에서는 vm_alloc_page_initializer()가 호출된다. 이때가 커널이 새 페이지 request를 받은 상황. */
-				if (!load_segment(file, file_page, (void *)mem_page,
-								  read_bytes, zero_bytes, writable))
+				if (!load_segment(file, file_page, (void *)mem_page, read_bytes, zero_bytes, writable))
 					goto done;
 			}
 			else
@@ -783,6 +782,11 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 }
 
 /* Create a minimal stack by mapping a zeroed page at the USER_STACK */
+/*
+setup-stack 수정을 하는데 첫 번째 스택 페이지의 경우 lazy allocated 할 필요 없이 바로 할당 해주면 된다.
+setup-stack에서 lazy allocation을 할 경우, setup-stack()이 끝나고 이어서 argument passing이 이루어질 때 스택 영역에 argument를 넣어주게 되는데,
+어차피 여기서 page fault가 일어나서 physical memory를 할당하므로 setup-stack에서 바로 physical memory 할당을 해줘도 되는 것.
+*/
 static bool
 setup_stack(struct intr_frame *if_)
 {
@@ -811,24 +815,30 @@ lazy_load_segment(struct page *page, void *aux)
 // lazy_load_segment() 내에서는 프로세스가 uninit_page로 처음 접근하여 page_fault가 발생하면 해당 함수가 호출된다.
 // 호출된 page를 frame과 맵핑하고 해당 page에 연결된 물리 메모리에 file 정보를 load 해준다.
 	/* TODO: Load the segment from the file */
-	struct file *file = ((struct load_segment_container *)aux)->file;
-	off_t offsetof = ((struct load_segment_container *)aux)->ofs;
-	size_t page_read_bytes = ((struct load_segment_container *)aux)->page_read_bytes;
-    size_t page_zero_bytes = PGSIZE - page_read_bytes;
+	struct load_segment_container *info = (struct load_segment_container*) aux;
+	struct file *file = info->file;
+	off_t ofs = info->ofs;
+	uint8_t *upage = info->upage;
+	uint32_t page_read_bytes = info->page_read_bytes;
+	uint32_t page_zero_bytes = info->page_zero_bytes;
+	bool writable = info->writable;
 
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* 페이지에 매핑된 물리 메모리(frame, 커널 가상 주소)에 파일의 데이터를 읽어온다. */
-	file_seek(file, offsetof);
+	uint8_t *kpage = page->frame->kva;
 
-    if (file_read(file, page->frame->kva, page_read_bytes) != (int)page_read_bytes) {
-		palloc_free_page(page->frame->kva);
-        return false;
-    }
+	if (kpage == NULL)
+		return false;
 
-	/* 만약 1페이지 못 되게 받아왔다면 남는 데이터를 0으로 초기화한다.  */
-	memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
+	file_seek(file, ofs);
 
-	/* TODO: VA is available when calling this function. */
+	if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes) {
+		free(info);
+		palloc_free_page (kpage);
+		return false;
+	}
+	memset (kpage + page_read_bytes, 0, page_zero_bytes);
+
 	return true;
 }
 
@@ -854,7 +864,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 			 uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
 // 재정의된 load_segment 내에서는, 
-// 파일을 page 단위로 끊어서 uninit 페이지로 만들고 file 정보를 page에 저장하고 SPT에 추가한다.
+// 파일을 page 단위로 끊어서 uninit 페이지로 만들고 파일 정보를 page에 저장하고 SPT에 추가한다.
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
@@ -869,48 +879,71 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		// void *aux = NULL; // 기존 코드
+		void *aux = NULL; // 기존 코드
 		// 여기서 너무 많은 포인터들을 lazy_load_segment의 aux로 넘겨야 하므로, 새로운 구조체를 추가적으로 선언하여 
 		// file을 load 할 때 필요한 file, offset, read_bytes를 저장하고 initializer를 호출하고 aux 인자로 넘겨준다.
-        // struct load_segment_container *aux = palloc_get_page(PAL_USER);
-        struct load_segment_container *aux = (struct load_segment_container*)malloc(sizeof(struct load_segment_container));
-		aux->file = file;
-		aux->ofs = _ofs;
-        aux->page_read_bytes = page_read_bytes;
-        aux->page_zero_bytes = page_zero_bytes;
-		aux->writable = writable;
+        struct load_segment_container *info = (struct load_segment_container*)malloc(sizeof(struct load_segment_container));
+		if (info == NULL) return false;
 
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
-											writable, lazy_load_segment, aux))
+		info->file = file;
+		info->ofs = _ofs;
+		info->upage = upage;
+        info->page_read_bytes = page_read_bytes;
+        info->page_zero_bytes = page_zero_bytes;
+		info->writable = writable;
+
+		aux = info; // type casting !?
+
+		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux)) {
+			free(info);
 			return false;
+		}
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
-		_ofs += PGSIZE;
+		// _ofs += PGSIZE; // 오답
+		_ofs += page_read_bytes;
 	}
 	return true;
 }
 
-/* Create a PAGE of stack at the USER_STACK. Return true on success. */
-/* 메모리에서 불러온 스택을 유저 스택에 적재한다. 여기서 mapping까지 수행한다. */
 static bool
-setup_stack(struct intr_frame *if_)
-{
+setup_stack (struct intr_frame *if_) {
+// 	// Project 3
+// 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
+// 	 * TODO: If success, set the rsp accordingly.
+// 	 * TODO: You should mark the page is stack. */
+// 	/* TODO: Your code goes here */
+// 	/* 할 일: 스택을 스택_하단에 매핑하고 즉시 페이지를 소유권을 주장하세요.
+// 	 * 할 일: 성공하면 그에 따라 rsp를 설정하세요.
+// 	 * 할 일: 페이지가 스택임을 표시해야 합니다. */
+// 	/* TODO: 코드가 여기에 있습니다 */
+// 	// 첫번째 스택 페이지는 lazy하게 할당되지 않아야 한다. 우리는 load time에 커맨드라인 인자와 함께 이 첫 스택 페이지를 할당하고 초기화할 수 있는데, 
+// 	// 이때 fault가 뜨기를 기다릴 필요가 없다. 우리는 아마 스택을 구분할 방법을 제공할 필요가 있을 것이다. 우리는 보조 마커로 페이지를 마킹하기 위해 vm_type(vm/vm.h)을 사용할 수 있다.
 	bool success = false;
-	void *stack_bottom = (void *)(((uint8_t *)USER_STACK) - PGSIZE);
-
-	/* TODO: Map the stack on stack_bottom and claim the page immediately.
-	 * TODO: If success, set the rsp accordingly.
-	 * TODO: You should mark the page is stack. */
-	/* TODO: Your code goes here */
-	success = vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1); // type, upage, writable
-	if (success) { 
-        struct page *pg = spt_find_page(&thread_current()->spt, stack_bottom);
-        if (vm_claim_page(stack_bottom))
-            if_->rsp = (uintptr_t)USER_STACK;
+	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
+	struct supplemental_page_table *spt = &thread_current()->spt;
+	
+	// vm_alloc_page(VM_ANON, page, ) // NULL, NULL 인자로 vm_alloc_page_with_initialize 호출하는 함수
+	if (vm_alloc_page(VM_ANON, stack_bottom, true)){
+		struct page *page = spt_find_page (spt, stack_bottom);
+// 			/*
+// 				Pintos에서는 struct thread에 stack_bottom 필드를 추가하여 스택의 시작 주소를 추적하고 
+// 				스택 공간이 할당되고 사용되는 메모리 주소 범위를 추적합니다. 이렇게 함으로써 스택 공간이 할당되고 
+// 				사용되는 메모리 주소 범위를 추적할 수 있습니다.
+// 			*/
+		if (page != NULL){
+			if (vm_claim_page(stack_bottom)){
+				if_->rsp = USER_STACK;
+				success = true;
+			}
+		}
+	}
+	else {
+		success = false;
 	}
 	return success;
 }
-#endif /* VM */
+#endif /* VM */ 

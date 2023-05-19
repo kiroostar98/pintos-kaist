@@ -66,6 +66,9 @@ struct page {
 /* The representation of "frame" */
 struct frame {
 	void *kva;
+/*  kva == pa + KERN_BASE이므로, 변환 관계 또한 간단합니다. 그래서 우리는 physical address를 다루기 위해 kva를 대신 사용합니다.
+    kva는 항상 physical memory에 단순한 일대일 대응을 갖습니다.
+    kva space는 곧 pa space이므로 유저가 저장한 정보도 항상 kva가 있습니다. */
 	struct page *page;
 	struct list_elem frame_elem;
 };
@@ -125,9 +128,12 @@ enum vm_type page_get_type (struct page *page);
 struct load_segment_container {
 	struct file *file;
     off_t ofs;
+	uint8_t *upage;
     size_t page_read_bytes;
     size_t page_zero_bytes;
 	bool writable;
 };
+
+struct lock kill_lock;
 
 #endif  /* VM_VM_H */
