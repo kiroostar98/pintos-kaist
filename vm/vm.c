@@ -4,8 +4,8 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "threads/vaddr.h"
-#include "hash.h"
-#include "include/userprog/process.h"
+// #include "hash.h"
+// #include "include/userprog/process.h"
 #include "threads/mmu.h"
 #define USER_STK_LIMIT (1 << 20)
 
@@ -208,28 +208,29 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user U
 	struct page *page = NULL;
 	uintptr_t rsp;
 	/* TODO: Validate the fault */
-	/* if문으로 not present인지 확인 -> find page*/
 	/* TODO: Your code goes here */
+	// not-present : 해당 인자가 false인 경우는 read-only 페이지에 write를 하려는 상황을 나타냄
 	if (not_present) {
+		/* 
+			page fault가 usermode일때 발생할수있고 kernelmode일때 발생할수 있는데 우리가 스택을 늘려야 하는 것은 유저스택이다 그러므로 
+			유저모드에서 커널모드로 전환이 되기 직전인 syscall_handler에서 thread->user_rsp를 저장을 해주어 유저모드에서의 rsp를 저장해둔다.
+			왜냐하면 만약 커널모드인 경우 intr_frame에서 rsp를 받게 되면 커널스택을 가리키고 있어 유저스택을 늘리는 기준으로 잡을수 없다.
+		*/
 		rsp = (user == true)? f->rsp : thread_current()->user_rsp;
 		if (USER_STACK - USER_STK_LIMIT <= rsp - 8 && rsp - 8 <= addr && addr <= USER_STACK) {
 			vm_stack_growth(addr);
 		}
 		
+		// spt에서 페이지를 찾는다.
 		page = spt_find_page(spt, addr);
 		if (page == NULL)
 			return false;
 
 		if (write == 1 && page->writable == 0)
 			return false;
-
+		// 이후 찾은 페이지를 실제 물리메모리주소와 매핑한다.
 		return vm_do_claim_page(page);
 	}
-	/*이 함수에서는 Page Fault가 스택을 증가시켜야하는 경우에 해당하는지 아닌지를 확인해야 합니다.
-	스택 증가로 Page Fault 예외를 처리할 수 있는지 확인한 경우, 
-	Page Fault가 발생한 주소로 vm_stack_growth를 호출합니다.*/
-	/* rsp-8 <= addr <= user_stack이면  */
-
 	return false;
 }
 

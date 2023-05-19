@@ -14,12 +14,13 @@
 #include "devices/input.h"
 #include "lib/kernel/stdio.h"
 #include "threads/palloc.h"
+#include "vm/vm.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
-void check_address(void *addr);
-// struct page* check_address(void *addr);
-// void check_valid_buffer(void* buffer, unsigned size, bool to_write);
+// void check_address(void *addr);
+struct page* check_address(void *addr);
+void check_valid_buffer(void* buffer, unsigned size, bool to_write);
 void halt(void);
 void exit(int status);
 bool create(const char *file, unsigned initial_size);
@@ -34,6 +35,8 @@ void close(int fd);
 tid_t fork(const char *thread_name, struct intr_frame *f);
 int exec(const char *cmd_line);
 int wait(int pid);
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 
 /* System call.
  *
@@ -97,11 +100,11 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		f->R.rax = filesize(f->R.rdi);
 		break;
 	case SYS_READ:
-		// check_valid_buffer(f->R.rsi, f->R.rdx, 1);
+		check_valid_buffer(f->R.rsi, f->R.rdx, 1);
 		f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_WRITE:
-		// check_valid_buffer(f->R.rsi, f->R.rdx, 0);
+		check_valid_buffer(f->R.rsi, f->R.rdx, 0);
 		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_SEEK:
@@ -112,43 +115,50 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		break;
 	case SYS_CLOSE:
 		close(f->R.rdi);
+		break;
+	case SYS_MMAP:
+	    f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
+		break;
+	
 	}
 }
 
 /* Project2-2 User Memory Access */
-void check_address(void *addr)
-{
-	if (addr == NULL)
-		exit(-1);
-	if (!is_user_vaddr(addr))
-		exit(-1);
-	// if (pml4_get_page(thread_current()->pml4, addr) == NULL)
-	// 	exit(-1);
-}
+// void check_address(void *addr)
+// {
+// 	if (addr == NULL)
+// 		exit(-1);
+// 	if (!is_user_vaddr(addr))
+// 		exit(-1);
+// 	// if (pml4_get_page(thread_current()->pml4, addr) == NULL)
+// 	// 	exit(-1);
+// }
 
 /* Project3  */
-// struct page * check_address(void * addr) {
-// 	if (addr == NULL || is_kernel_vaddr(addr)) {
-// 		exit(-1);
-// 	}
+struct page * check_address(void * addr) {
+	if (addr == NULL || is_kernel_vaddr(addr)) {
+		exit(-1);
+	}
 
-// 	return spt_find_page(&thread_current()->spt, addr);
-// }
+	return spt_find_page(&thread_current()->spt, addr);
+}
 
-// void check_valid_buffer(void* buffer, unsigned size, bool to_write){
-// 	/* 버퍼 내의 시작부터 끝까지의 각 주소를 모두 check_address*/
-// 	for (int i = 0; i < size; i++){
-// 		struct page* page = check_address(buffer + i); 
+void check_valid_buffer(void* buffer, unsigned size, bool to_write){
+	/* 버퍼 내의 시작부터 끝까지의 각 주소를 모두 check_address*/
+	for (int i = 0; i < size; i++){
+		struct page* page = check_address(buffer + i); 
 
-// 		/* 해당 주소가 포함된 페이지가 spt에 없다면 */
-// 		if(page == NULL)
-// 			exit(-1);
+		// page == NULL이 나와서 실패함.............................
+		/* 해당 주소가 포함된 페이지가 spt에 없다면 */
 		
-// 		/* write 시스템 콜을 호출했는데 이 페이지가 쓰기가 허용된 페이지가 아닌 경우 */
-// 		if(page->writable == false && to_write == true)
-// 			exit(-1);
-// 	}
-// }
+		/* write 시스템 콜을 호출했는데 이 페이지가 쓰기가 허용된 페이지가 아닌 경우 */
+		if(page != NULL && page->writable == false && to_write == true)
+			exit(-1);
+	}
+}
 
 void halt(void)
 {
@@ -310,4 +320,44 @@ int exec(const char *cmd_line)
 int wait(int pid)
 {
 	return process_wait(pid);
+}
+
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset)
+{
+	// fd로 열린 파일의 오프셋(offset) 바이트부터 length 바이트 만큼을 프로세스의 가상주소공간의 주소 addr 에 매핑 합니다.
+	struct file *file= process_get_file(fd);
+	// file 포인터로 예외처리 다해주고 do_mmap으로 넘기기
+
+	if (addr == NULL || (int)length <= 0){
+		return NULL;
+	}
+
+	// 페이지 단위로 딱 떨어지는 주소가 addr로 들어오는건가????
+	if (is_kernel_vaddr(addr) || pg_round_down(addr) != addr){
+		return NULL;
+	}
+
+	if (file == NULL){
+		return NULL;
+	}
+
+	if (offset % PGSIZE != 0){
+		return NULL;
+	}
+
+	if (fd == 0 || fd == 1){
+		exit(-1);
+	}
+
+	if (spt_find_page(&thread_current()->spt, addr)){
+		return NULL;
+	}
+
+	return do_mmap(addr, length, writable, file, offset);
+}
+
+void munmap (void *addr)
+{
+	// 지정된 주소 범위 addr에 대한 매핑을 해제합니다.
+	do_munmap(addr);
 }

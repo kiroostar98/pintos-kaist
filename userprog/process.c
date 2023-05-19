@@ -250,6 +250,8 @@ int process_exec(void *f_name)
 	for (token = strtok_r(file_name, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr))
 		parse[count++] = token;
 
+	// 삭제예정
+	// 지워야할지도?? 지워도 차이가 없음
 	lock_acquire(&filesys_lock);
 	/* And then load the binary */
 	success = load(file_name, &_if);
@@ -815,7 +817,7 @@ struct thread *get_child_process(int pid)
 	return NULL;
 }
 
-static bool
+bool
 lazy_load_segment(struct page *page, void *aux)
 {
 	// Project 3

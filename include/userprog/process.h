@@ -15,6 +15,7 @@ int process_add_file(struct file *f);
 struct file *process_get_file(int fd);
 void process_close_file(int fd);
 struct thread *get_child_process(int pid);
+bool lazy_load_segment(struct page *page, void *aux);
 
 // project 3
 // 우리는 현재 lazy loading 방식을 취하고 있고 이는 파일 전체를 다 읽어오지 않는다. 
