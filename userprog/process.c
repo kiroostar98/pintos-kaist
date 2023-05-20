@@ -809,7 +809,7 @@ setup_stack(struct intr_frame *if_)
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
-static bool
+bool
 lazy_load_segment(struct page *page, void *aux)
 {
 // lazy_load_segment() 내에서는 프로세스가 uninit_page로 처음 접근하여 page_fault가 발생하면 해당 함수가 호출된다.
@@ -929,11 +929,11 @@ setup_stack (struct intr_frame *if_) {
 	// vm_alloc_page(VM_ANON, page, ) // NULL, NULL 인자로 vm_alloc_page_with_initialize 호출하는 함수
 	if (vm_alloc_page(VM_ANON, stack_bottom, true)){
 		struct page *page = spt_find_page (spt, stack_bottom);
-// 			/*
-// 				Pintos에서는 struct thread에 stack_bottom 필드를 추가하여 스택의 시작 주소를 추적하고 
-// 				스택 공간이 할당되고 사용되는 메모리 주소 범위를 추적합니다. 이렇게 함으로써 스택 공간이 할당되고 
-// 				사용되는 메모리 주소 범위를 추적할 수 있습니다.
-// 			*/
+/*
+	Pintos에서는 struct thread에 stack_bottom 필드를 추가하여 스택의 시작 주소를 추적하고 
+	스택 공간이 할당되고 사용되는 메모리 주소 범위를 추적합니다. 이렇게 함으로써 스택 공간이 할당되고 
+	사용되는 메모리 주소 범위를 추적할 수 있습니다.
+*/
 		if (page != NULL){
 			if (vm_claim_page(stack_bottom)){
 				if_->rsp = USER_STACK;

@@ -32,6 +32,8 @@ void close(int fd);
 tid_t fork(const char *thread_name, struct intr_frame *f);
 int exec(const char *cmd_line);
 int wait(int pid);
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 
 /* System call.
  *
@@ -107,6 +109,13 @@ void syscall_handler(struct intr_frame *f UNUSED)
 		break;
 	case SYS_CLOSE:
 		close(f->R.rdi);
+		break;
+	case SYS_MMAP:
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
+		break;
 	}
 }
 
@@ -190,64 +199,80 @@ void close(int fd)
 	file_close(file);
 	process_close_file(fd);
 }
+
 int read(int fd, void *buffer, unsigned size)
 {
 	check_address(buffer);
 
-	char *ptr = (char *)buffer;
+	struct page *page = spt_find_page(&thread_current()->spt, pg_round_down(buffer));
+	if ((page != NULL) && (page->writable == 0)) {
+		exit(-1);
+	}
+
 	int bytes_read = 0;
+	char *ptr = (char *)buffer; // void주소값 buffer를 char포인터로 캐스팅.
 
 	lock_acquire(&filesys_lock);
-	if (fd == 0)
-	{
-		for (int i = 0; i < size; i++)
+	if (fd == 0) {
+		// 틀린 코드. 
+		// for (int i = 0; i < size; i++)
+		// {
+		// 	*ptr++ = input_getc();
+		// 	bytes_read++;
+		// }
+		// lock_release(&filesys_lock);
+		char key;
+		for (bytes_read = 0; bytes_read < size; bytes_read++)
 		{
-			*ptr++ = input_getc();
-			bytes_read++;
+			key = input_getc();	  // 키보드에 한 개의 문자를 입력 받고,
+			*ptr++ = key;		  // ptr에 받은 문자를 저장한다.
+			if (key == '\n') {
+				break;
+			}
 		}
-		lock_release(&filesys_lock);
 	}
-	else
-	{
-		if (fd < 2)
+	else if (fd == 1) {
+		lock_release(&filesys_lock);
+		return -1;
+	} 
+	else {
+		struct file *read_file = process_get_file(fd);
+		if (read_file == NULL)
 		{
-
 			lock_release(&filesys_lock);
 			return -1;
 		}
-		struct file *file = process_get_file(fd);
-		if (file == NULL)
-		{
-
-			lock_release(&filesys_lock);
-			return -1;
-		}
-		bytes_read = file_read(file, buffer, size);
-		lock_release(&filesys_lock);
+		bytes_read = file_read(read_file, buffer, size);
 	}
+	lock_release(&filesys_lock);
 	return bytes_read;
 }
 
 int write(int fd, const void *buffer, unsigned size)
 {
 	check_address(buffer);
+
 	int bytes_write = 0;
+
+	lock_acquire(&filesys_lock);
 	if (fd == 1)
 	{
-		putbuf(buffer, size);
+		putbuf(buffer, size); // putbuf(): 버퍼 안에 들어있는 값 중 사이즈 N만큼을 console로 출력
 		bytes_write = size;
 	}
-	else
-	{
-		if (fd < 2)
-			return -1;
-		struct file *file = process_get_file(fd);
-		if (file == NULL)
-			return -1;
-		lock_acquire(&filesys_lock);
-		bytes_write = file_write(file, buffer, size);
+	else if (fd == 0) {
 		lock_release(&filesys_lock);
+		return -1;
 	}
+	else {
+		struct file *fileobj = process_get_file(fd);
+		if (fileobj == NULL) {
+			lock_release(&filesys_lock);
+			return -1;
+		}
+		bytes_write = file_write(fileobj, buffer, size);
+	}
+	lock_release(&filesys_lock);
 	return bytes_write;
 }
 
@@ -281,4 +306,30 @@ int exec(const char *cmd_line)
 int wait(int pid)
 {
 	return process_wait(pid);
+}
+
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
+	if(fd == 0 || fd == 1){
+		exit(-1);
+	}
+
+	if (spt_find_page(&thread_current()->spt, addr)) {
+        return NULL;
+	} // 기존 매핑된 페이지 집합(실행가능 파일이 동작하는 동안 매핑된 스택 또는 페이지를 포함)과 겹치는 경우 실패해야.
+	// length로 몇 페이지가 필요한지 계산, 계산한 페이지 수 만큼 (addr + i)가 맵핑된 페이지인지 spt find로 확인.
+
+	struct file *fileobj = process_get_file(fd);
+	if(!fileobj || !filesize(fd) || file_length(fileobj) == 0){
+		return NULL;
+	}
+
+	if (is_kernel_vaddr(addr) || addr == 0 || length == 0 || offset % PGSIZE != 0 || pg_round_down(addr) != addr || pg_ofs(addr) != 0  || KERN_BASE <= length) {
+		return NULL;
+	}
+
+	return do_mmap(addr, length, writable, fileobj, offset);
+}
+
+void munmap (void *addr) {
+	do_munmap(addr);
 }

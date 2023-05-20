@@ -21,9 +21,14 @@
 #define PGMASK  BITMASK(PGSHIFT, PGBITS)   /* Page offset bits (0:12). */
 
 /* Offset within a page. */
+// 아래의 두 매크로는 가상 주소의 특정 부분을 추출하거나 조작하는 유틸리티 기능을 제공합니다.
 #define pg_ofs(va) ((uint64_t) (va) & PGMASK)
-
+// 이 매크로는 가상 주소 va의 오프셋 부분을 추출하는 데 사용됩니다.
+// PGMASK는 페이지 내 최대 오프셋 값을 나타내는 비트 마스크입니다.
 #define pg_no(va) ((uint64_t) (va) >> PGBITS)
+// 이 매크로는 가상 주소 va와 관련된 페이지 번호를 계산하는 데 사용됩니다.
+// PGBITS는 페이지 번호를 나타내는 데 사용되는 비트 수를 나타냅니다.
+// 오른쪽 이동 연산(>>)을 사용하여 가상 주소 va의 비트를 PGBITS 위치만큼 오른쪽으로 이동하여 오프셋을 나타내는 하위 비트를 효과적으로 버립니다.
 
 /* Round up to nearest page boundary. */
 #define pg_round_up(va) ((void *) (((uint64_t) (va) + PGSIZE - 1) & ~PGMASK))

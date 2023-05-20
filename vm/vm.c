@@ -55,6 +55,7 @@ static struct frame *vm_get_victim (void);
 static bool vm_do_claim_page (struct page *page);
 static struct frame *vm_evict_frame (void);
 static struct frame *vm_get_frame (void);
+void spt_destroy_func(struct hash_elem *e, void *aux);
 
 /* Create the pending page object with initializer. If you want to create a
  * page, do not create it directly and make it through this function or
@@ -367,7 +368,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED, struct
 	struct hash_iterator i;
 	/* 1. SRC의 해시 테이블의 각 bucket 내 elem들을 모두 복사한다. */
 	hash_first(&i, &src->spt_hash);
-	while (hash_next(&i)){ // src의 각각의 페이지를 반복문을 통해 복사
+	while (hash_next(&i)) { // src의 각각의 페이지를 반복문을 통해 복사
 		struct page *parent_page = hash_entry (hash_cur (&i), struct page, spt_hash_elem);   // 현재 해시 테이블의 element 리턴
 		enum vm_type type = page_get_type(parent_page);		// 부모 페이지의 type
     	void *upage = parent_page->va;				    	// 부모 페이지의 가상 주소
@@ -390,7 +391,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED, struct
 		if (parent_page->operations->type == VM_UNINIT) { 
 			if(!vm_alloc_page_with_initializer(type, upage, writable, init, aux))
 				// 자식 프로세스의 유저 메모리에 UNINIT 페이지를 하나 만들고 SPT 삽입.
-			return false;
+				return false;
 		}
       	else {  // 즉, else문의 코드는 실제 부모의 물리메모리에 매핑되어있던 데이터는 없는 상태이다. 그래서 아래에서 memcpy로 부모의 데이터 또한 복사해 넣어준다.
         	if(!vm_alloc_page(type, upage, writable)) // type에 맞는 페이지 만들고 SPT 삽입.
@@ -405,16 +406,26 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED, struct
 	return true;
 }
 
-static void spt_destroy_func(struct hash_elem *e, void *aux) {
+void spt_destroy_func(struct hash_elem *e, void *aux) {
     const struct page *p = hash_entry(e, struct page, spt_hash_elem);
-    vm_dealloc_page(p);
+    // vm_dealloc_page(p);
+	destroy(p);
+	free(p);
 }
 
 /* Free the resource hold by the supplemental page table */
 void supplemental_page_table_kill(struct supplemental_page_table *spt) {
     /* TODO: Destroy all the supplemental_page_table hold by thread */
     lock_acquire(&kill_lock);
-    hash_clear(&spt->spt_hash, spt_destroy_func);
+	// struct hash_iterator i;
+	// hash_first(&i, &spt->spt_hash);
+	// while (hash_next(&i)) { 
+	// 	struct page *parent_page = hash_entry (hash_cur (&i), struct page, spt_hash_elem); 
+	// 	if (parent_page->operations->type == VM_FILE) {
+	// 		do_munmap(parent_page->va);
+	// 	}
+	// }
+	hash_clear(&spt->spt_hash, spt_destroy_func); //project 3 - anonymous page 
     lock_release(&kill_lock);
     /* TODO: writeback all the modified contents to the storage. */
 }

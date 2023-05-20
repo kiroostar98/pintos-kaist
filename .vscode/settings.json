@@ -1,0 +1,7 @@
+{
+  "files.associations": {
+    "process.h": "c",
+    "vm.h": "c",
+    "vaddr.h": "c"
+  }
+}
