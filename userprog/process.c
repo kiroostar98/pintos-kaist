@@ -818,7 +818,6 @@ lazy_load_segment(struct page *page, void *aux)
 	struct load_segment_container *info = (struct load_segment_container*) aux;
 	struct file *file = info->file;
 	off_t ofs = info->ofs;
-	uint8_t *upage = info->upage;
 	uint32_t page_read_bytes = info->page_read_bytes;
 	uint32_t page_zero_bytes = info->page_zero_bytes;
 	bool writable = info->writable;
@@ -838,6 +837,8 @@ lazy_load_segment(struct page *page, void *aux)
 		return false;
 	}
 	memset (kpage + page_read_bytes, 0, page_zero_bytes);
+	uint64_t *pml4 = thread_current()->pml4;
+	pml4_set_page(pml4, page->va, kpage, writable);
 
 	return true;
 }

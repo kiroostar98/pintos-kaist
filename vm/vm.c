@@ -182,19 +182,13 @@ vm_get_frame (void) {
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
-	struct thread *t = thread_current();
-	struct supplemental_page_table *spt = &t->spt;
-	// page fault가 난 지점을 찾고(addr), 현재 스택 공간이 어디까지 할당되었는지 확인한 뒤
-	// 늘려야 할 만큼 늘려 준다 -> 일단 한 페이지만 늘려볼까? 한 페이지만 늘려주면 됨
-	void *stack_bottom = pg_round_down(addr);
-	/* 스택의 맨 밑(stack_bottom)보다 1 PAGE 아래에 페이지를 하나 만든다. 
-	이 페이지의 타입은 ANON이어야 한다(스택은 anonymous page!) 
-	맨 처음 UNINIT 페이지를 만들고 SPT에 넣은 뒤, 바로 claim한다. */
-	if (vm_alloc_page(VM_ANON, stack_bottom, true)) {
-		struct page *page = spt_find_page(spt, stack_bottom);
-		if (page != NULL) {
-			vm_claim_page(stack_bottom);
-		}
+	void *pg_addr = pg_round_down(addr);
+	ASSERT((uintptr_t)USER_STACK - (uintptr_t)pg_addr <= (1 << 20));
+
+	while (vm_alloc_page(VM_ANON, pg_addr, true)) {
+		struct page *pg = spt_find_page(&thread_current()->spt, pg_addr);
+		vm_claim_page(pg_addr);
+		pg_addr += PGSIZE;
 	}
 }
 
@@ -276,6 +270,9 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user U
 	if (pml4_get_page(thread_current()->pml4, pg_round_down(addr)) == NULL) {
 		return false;
 	}
+
+	if (!not_present)
+		return false;
 
 	return true; // page_fault()안에서 호출된 vm_try_handle_fault()는 성공적으로 수행을 완료하고 return true를 해줘야. 그래야 exception으로서의 page_fault()가 호출됐었던 그 위치로 돌아가게(return) 되니까~
 }

@@ -127,7 +127,7 @@ void check_address(void *addr)
 		exit(-1);
 	// if (pml4_get_page(thread_current()->pml4, addr) == NULL)
 	// 	exit(-1);
-	return spt_find_page(&thread_current()->spt, addr);
+	// return spt_find_page(&thread_current()->spt, addr);
 }
 
 void halt(void)
@@ -203,10 +203,16 @@ void close(int fd)
 int read(int fd, void *buffer, unsigned size)
 {
 	check_address(buffer);
-
-	struct page *page = spt_find_page(&thread_current()->spt, pg_round_down(buffer));
-	if ((page != NULL) && (page->writable == 0)) {
+	if (fd < 0 || fd >= FDT_COUNT_LIMIT)
 		exit(-1);
+	struct page *page = spt_find_page(&thread_current()->spt, pg_round_down(buffer));
+	uint64_t pml4 = thread_current()->pml4;
+	uint64_t *pte = pml4e_walk(pml4, page->va, 0);
+	bool pml4_writable = is_writable(pte);
+
+	if (page != NULL){
+		if ((page->writable == 0) && (pml4_writable == 0))
+			exit(-1);
 	}
 
 	int bytes_read = 0;
