@@ -13,7 +13,7 @@ unsigned page_hash (const struct hash_elem *p_, void *aux UNUSED);
 bool page_less (const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED);
 /* frame 관리 테이블 */
 struct list frame_table;
-
+struct list_elem *start;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void
@@ -24,7 +24,8 @@ vm_init (void) {
 	pagecache_init ();
 #endif
 	register_inspect_intr ();
-	list_init(&frame_table);
+	list_init(&frame_table);           // 수정!
+	start = list_begin(&frame_table);  // 수정!
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
 
@@ -143,49 +144,75 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 }
 
 /* Get the struct frame, that will be evicted. */
-static struct frame *
-vm_get_victim (void) {
+static struct frame *vm_get_victim(void)
+{
 	struct frame *victim = NULL;
-	/* TODO: The policy for eviction is up to you. */
-	// 구현해야함
-	// for문을 돌면서 pml4에서 제거할 애를 찾는다. 
+	/* FIFO eviction policy */
+	// victim = list_entry(list_pop_front (&frame_table), struct frame, frame_elem);
+	// // swap-file, swap-anon 실패
+	struct thread *curr = thread_current();
+	struct list_elem *e = start;
 
+	/*  */
+	for (start = e; start != list_end(&frame_table); start = list_next(start))
+	{
+		victim = list_entry(start, struct frame, frame_elem);
+		if (pml4_is_accessed(curr->pml4, victim->page->va))
+			pml4_set_accessed(curr->pml4, victim->page->va, 0);
+		else
+			return victim;
+	}
+
+	for (start = list_begin(&frame_table); start != e; start = list_next(start))
+	{
+		victim = list_entry(start, struct frame, frame_elem);
+		if (pml4_is_accessed(curr->pml4, victim->page->va))
+			pml4_set_accessed(curr->pml4, victim->page->va, 0);
+		else
+			return victim;
+	}
 	return victim;
 }
 
 /* Evict one page and return the corresponding frame.
  * Return NULL on error.*/
-static struct frame *
-vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
+static struct frame *vm_evict_frame(void)
+{
+	struct frame *victim UNUSED = vm_get_victim();
 	/* TODO: swap out the victim and return the evicted frame. */
-	// 구현해야함
-	// 이 함수는 page에 달려있는 frame 공간을 디스크로 내리는 swap out을 진행하는 함수이다. 
-	// swap_out()은 매크로로 구현되어 있으니 이를 적용해주면 된다.
-	return NULL;
+	swap_out(victim->page);
+	
+	return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
  * and return it. This always return valid address. That is, if the user pool
  * memory is full, this function evicts the frame to get the available memory
  * space.*/
-static struct frame *
-vm_get_frame (void) {
-	// 가상 메모리 프레임을 가져오는 함수
-	// palloc()을 호출하고 프레임을 가져옵니다. 사용 가능한 페이지가 없으면 페이지를 퇴거하고 를 반환합니다. 
-	// 이 함수는 항상 유효한 주소를 반환합니다. 즉, 사용자 풀 메모리가 가득 차면 이 함수는 프레임을 퇴거시켜 사용 가능한 메모리 공간을 확보합니다
+static struct frame *vm_get_frame(void)
+{
+	// struct frame *frame = NULL;
+	/* TODO: Fill this function. */
 	struct frame *frame = (struct frame *)malloc(sizeof(struct frame));
-	// 사용 가능한 페이지를 얻습니다. 이 함수는 페이지 할당자(palloc)를 통해 사용자 영역(PAL_USER)에 대한 페이지를 할당
-	frame->kva = palloc_get_page(PAL_USER);
-	if (frame->kva == NULL) {
-        PANIC("TODO");
-    }
 
-	list_push_back(&frame_table,&frame->frame_elem);
+	frame->kva = palloc_get_page(PAL_USER); /* USER POOL에서 커널 가상 주소 공간으로 1page 할당 */
+
+	/* if 프레임이 꽉 차서 할당받을 수 없다면 페이지 교체 실시
+	   else 성공했다면 frame 구조체 커널 주소 멤버에 위에서 할당받은 메모리 커널 주소 넣기 */
+	if (frame->kva == NULL)
+	{
+		frame = vm_evict_frame();  // 수정!
+		frame->page = NULL; 
+
+		return frame;
+	}
+/* 새 프레임을 프레임 테이블에 넣어 관리한다. */
+	list_push_back (&frame_table, &frame->frame_elem);  
+  
 	frame->page = NULL;
 
-	ASSERT (frame != NULL);
-	ASSERT (frame->page == NULL);
+	ASSERT(frame != NULL);
+	ASSERT(frame->page == NULL);
 	return frame;
 }
 
