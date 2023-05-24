@@ -2,7 +2,9 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "threads/vaddr.h"
 #include "hash.h"
+#include "devices/disk.h"
 
 enum vm_type {
 	/* page not initialized */
@@ -136,5 +138,15 @@ struct load_segment_container {
 };
 
 struct lock kill_lock;
+struct lock swap_lock;
+
+struct list frame_table;
+struct bitmap *swap_table;
+
+/*
+1 disk sector = 512 bytes
+8 disk sectors = 1 page = 4096 bytes
+*/
+const size_t SECTORS_PER_PAGE; // 8 == 4096/512
 
 #endif  /* VM_VM_H */

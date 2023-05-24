@@ -5,19 +5,22 @@
 #include "vm/inspect.h"
 #include "userprog/process.h"
 #include "threads/mmu.h"
+#include "vm/anon.h"
+#include "vm/file.h"
+#include "threads/vaddr.h"
 #define USER_STK_LIMIT (1 << 20)
+const size_t SECTORS_PER_PAGE = PGSIZE / DISK_SECTOR_SIZE; // 8 == 4096/512
+struct list_elem *start;
 
 static bool
-install_page (void *upage, void *kpage, bool writable) {
-	struct thread *t = thread_current ();
+install_page(void *upage, void *kpage, bool writable)
+{
+	struct thread *t = thread_current();
 
 	/* Verify that there's not already a page at that virtual
 	 * address, then map our page there. */
-	return (pml4_get_page (t->pml4, upage) == NULL
-			&& pml4_set_page (t->pml4, upage, kpage, writable));
+	return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
 }
-
-struct list frame_table;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -33,6 +36,7 @@ vm_init (void) {
 	/* TODO: Your code goes here. */
 	list_init(&frame_table);
 	lock_init(&kill_lock);
+	lock_init(&swap_lock);
 	struct list_elem *start = list_begin(&frame_table);
 }
 
@@ -137,7 +141,12 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 /* Get the struct frame, that will be evicted. */
 static struct frame *
 vm_get_victim (void) {
-	struct frame *victim = NULL;
+	struct frame *victim;
+	if (!list_empty(&frame_table)){
+		victim = list_entry(list_begin(&frame_table), struct frame, frame_elem);
+		}
+	else
+		victim = NULL;
 	 /* TODO: The policy for eviction is up to you. */
 
 	return victim;
@@ -149,9 +158,23 @@ static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
 	/* TODO: swap out the victim and return the evicted frame. */
-
-	return NULL;
+	list_remove(&victim->frame_elem);
+	swap_out(victim->page);
+	return victim;
 }
+// 오답
+// static struct frame *
+// vm_evict_frame (void) {
+// 	struct frame *victim UNUSED = vm_get_victim ();
+// 	/* TODO: swap out the victim and return the evicted frame. */
+// 	if (victim == NULL) {
+// 		swap_out(victim->page);
+// 		printf("스왑아웃완\n");
+// 		list_remove(&victim->frame_elem);
+// 		return victim;
+// 	}
+// 	return victim;
+// }
 
 /* palloc() and get frame. If there is no available page, evict the page
  * and return it. This always return valid address. That is, if the user pool
@@ -159,20 +182,20 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
-	// struct frame *frame = NULL;
+	struct frame *frame = (struct frame *)calloc(1, sizeof(struct frame));
 	/* TODO: Fill this function. */
-	// 위에 주석에서 palloc 하라고 했는데 palloc으로 하면 안되는 이유..?
-	// frame->kva = palloc_get_page(PAL_USER);???
-	// struct frame *frame = palloc_get_page(PAL_ZERO);????
-	struct frame *frame = (struct frame *)malloc(sizeof(struct frame));
 	frame->kva = palloc_get_page(PAL_USER); // 이걸 안 해줘서 계속 all fail 터졌다...
+	frame->page = NULL; // 순서 중요...
 
 	if (frame->kva == NULL) {
-		PANIC("todo");
+		vm_evict_frame();
+		frame->kva = palloc_get_page(PAL_USER);
+		if (frame->kva == NULL){
+			printf("vm_evict_frame에서도 프레임 얼로케이션 실패\n");
+		}
 	}
-
 	list_push_back(&frame_table, &frame->frame_elem);
-	frame->page = NULL;
+	// frame->page = NULL; // 순서 중요...
 
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
@@ -182,13 +205,16 @@ vm_get_frame (void) {
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
-	void *pg_addr = pg_round_down(addr);
-	ASSERT((uintptr_t)USER_STACK - (uintptr_t)pg_addr <= (1 << 20));
+	struct thread *t = thread_current();
+	struct supplemental_page_table *spt = &t->spt;
+	// page fault가 난 지점을 찾고(addr), 현재 스택 공간이 어디까지 할당되었는지 확인한 뒤
+	// 늘려야 할 만큼 늘려 준다 -> 일단 한 페이지만 늘려볼까? 한 페이지만 늘려주면 됨
+	void *stack_bottom = (void *)((uint8_t *)pg_round_down(addr));
 
-	while (vm_alloc_page(VM_ANON, pg_addr, true)) {
-		struct page *pg = spt_find_page(&thread_current()->spt, pg_addr);
-		vm_claim_page(pg_addr);
-		pg_addr += PGSIZE;
+	vm_alloc_page(VM_ANON, stack_bottom, true); 
+	struct page *page = spt_find_page(spt, stack_bottom);
+	if (page != NULL) {
+		vm_claim_page(stack_bottom);
 	}
 }
 
@@ -204,79 +230,133 @@ vm_handle_wp (struct page *page UNUSED) {
 vm_try_handle_fault에서 먼저 이것이 유효한 페이지 폴트인지 확인. 유효하다는 것은 유효하지 않은 액세스 오류를 의미.
 가짜 오류(bogus fault)인 경우, 일부 내용을 페이지에 로드하고 제어(control)를 사용자 프로그램에 반환(return).
 */
-bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED, 
-					bool write UNUSED, bool not_present UNUSED) {	 // user : mode bit가 user인지 kernel인지
-	struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
-	struct page *page = NULL;
+// bool
+// vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user UNUSED, 
+// 					bool write UNUSED, bool not_present UNUSED) {	 // user : mode bit가 user인지 kernel인지
+// 	struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
+// 	struct page *page = NULL;
 
+// 	struct thread *curr = thread_current();
+// 	void *fault_addr = addr;
+// 	/* TODO: Validate the fault */
+// 	/* TODO: Your code goes here */
+// 	/* 유효한 page fault인지를 가장 먼저 체크한다. 
+// 	"유효"하다는 것은 곧 유효하지 않은 접근 오류를 뜻한다. 만약 가짜 fault라면, 일부 내용을 페이지에 올리고 제어권을 사용자 프로그램에 반환한다.
+// 	fault가 뜬 주소와 대응하는 페이지 구조체를 해결한다. 이는 spt_find_page 함수를 통해 spt를 조사함으로써 이뤄진다. */
+
+// 	if (is_kernel_vaddr (fault_addr)) {
+// 		return false;
+// 	}
+
+// 	/* 이 함수에서는 Page Fault가 스택을 증가시켜야하는 경우에 해당하는지 아닌지를 확인한다.
+// 	스택 증가로 Page Fault 예외를 처리할 수 있는지 확인한 경우, Page Fault가 발생한 주소로 vm_stack_growth를 호출한다.
+
+// 	/* 유저 스택 포인터 가져오는 법 => 이때 반드시 유저 스택 포인터여야 함! 
+// 	모종의 이유로 인터럽트 프레임 내 rsp 주소가 커널 영역이라면 얘를 갖고 오는 게 아니라, 
+// 	thread 내에 우리가 이전에 저장해뒀던 rsp_stack(유저 스택 포인터)를 가져온다.
+// 	그게 아니라 유저 주소를 가리키고 있다면 f->rsp를 갖고 온다.
+// 	그리고, bogus인지 아닌지 확인. (현재, 우리가 할당해준 유저 스택의 맨 밑 주소값보다 더 아래에 접근하면 page fault가 발생한다. 
+// 	이 page fault가 stack growth에 관련된 것인지 먼저 확인하는 과정을 추가한다.)
+// 	bogus가 아니라면 vm_do_claim_page() (페이지의 valid/invaild bit이 0이면, 즉 메모리 상에 존재하지 않으면 프레임에 메모리를 올리고 프레임과 페이지를 매핑시킨다.) 
+
+// 	Page Fault가 스택을 증가시키는 경우는 총 두 경우이다. */
+// 	// 1. 만약 폴트가 사용자 모드에서 발생하고, fault_addr이 f->rsp-8과 같거나 f->rsp보다 작다면, 
+// 	if (user && ((fault_addr == (f->rsp-8)) || (f->rsp < fault_addr))) {
+// 		if (fault_addr >= (USER_STACK - PGSIZE * 250) && (fault_addr < USER_STACK)) {
+// 		// 이어서 fault_addr이 특정 범위(USER_STACK - PGSIZE * 250에서 USER_STACK) 내에 있는지 확인. 
+// 		// 만약 그렇다면 vm_stack_growth 함수를 호출하여 스택 확장을 처리하고 성공을 나타내는 true를 반환.
+// 			vm_stack_growth(fault_addr);
+// 			return true;
+// 		}
+// 	}
+// 	// 2. 폴트가 사용자 모드가 아닌 경우, fault_addr이 curr->rsp_stack - 8과 같거나 curr->rsp_stack보다 작다면, 
+// 	else if (!user && ((fault_addr == (curr->rsp_stack - 8)) || (curr->rsp_stack < fault_addr))) {
+// 		// 코드는 이전과 동일한 범위 확인을 수행. fault_addr이 범위 내에 있는 경우 vm_stack_growth를 호출. 성공을 나타내는 true를 반환.
+//     	if (fault_addr >= (USER_STACK - PGSIZE * 250) && (fault_addr < USER_STACK)) {
+// 			vm_stack_growth(fault_addr);
+// 			return true;
+// 		}
+// 	}
+
+// 	// spt에서 주소에 대한 page를 찾아 반환. 만약 NULL이라면 오류.
+// 	page = spt_find_page(spt, pg_round_down(addr));
+// 	if (page == NULL){
+// 		return false;
+// 	}
+
+// 	// 찾은 페이지가 아직 프레임과 매핑되어있지 않다면 vm_do_claim_page().
+// 	if (page->frame == NULL){
+// 		/* The page has not been initialized yet */
+// 		// obtain the base address of the page containing the faulted virtual address
+// 		if (!vm_do_claim_page(page)) {
+// 			return false;
+// 		}
+// 	}
+// 	// vm_do_claim_page()이 성공적이었다면 즉 매핑을 완료했다면 반드시 페이지테이블(pml4)에 해당 주소가 담겨있어야!
+// 	if (pml4_get_page(thread_current()->pml4, pg_round_down(addr)) == NULL) { // 그냥 addr ???
+// 		return false;
+// 	}
+
+// 	if (!not_present)
+// 		return false;
+
+// 	return true; // page_fault()안에서 호출된 vm_try_handle_fault()는 성공적으로 수행을 완료하고 return true를 해줘야. 그래야 exception으로서의 page_fault()가 호출됐었던 그 위치로 돌아가게(return) 되니까~
+// }
+
+/* Return true on success */
+bool
+vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
+		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
+
+	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
+	struct page *page = NULL;
 	struct thread *curr = thread_current();
 	void *fault_addr = addr;
+
 	/* TODO: Validate the fault */
-	/* TODO: Your code goes here */
-	/* 유효한 page fault인지를 가장 먼저 체크한다. 
-	"유효"하다는 것은 곧 유효하지 않은 접근 오류를 뜻한다. 만약 가짜 fault라면, 일부 내용을 페이지에 올리고 제어권을 사용자 프로그램에 반환한다.
-	fault가 뜬 주소와 대응하는 페이지 구조체를 해결한다. 이는 spt_find_page 함수를 통해 spt를 조사함으로써 이뤄진다. */
-
-	if (is_kernel_vaddr (fault_addr)) {
+	if (user && (is_kernel_vaddr (addr)))   // no effect ;;
 		return false;
-	}
 
-	/* 이 함수에서는 Page Fault가 스택을 증가시켜야하는 경우에 해당하는지 아닌지를 확인한다.
-	스택 증가로 Page Fault 예외를 처리할 수 있는지 확인한 경우, Page Fault가 발생한 주소로 vm_stack_growth를 호출한다.
-
-	/* 유저 스택 포인터 가져오는 법 => 이때 반드시 유저 스택 포인터여야 함! 
-	모종의 이유로 인터럽트 프레임 내 rsp 주소가 커널 영역이라면 얘를 갖고 오는 게 아니라, 
-	thread 내에 우리가 이전에 저장해뒀던 rsp_stack(유저 스택 포인터)를 가져온다.
-	그게 아니라 유저 주소를 가리키고 있다면 f->rsp를 갖고 온다.
-	그리고, bogus인지 아닌지 확인. (현재, 우리가 할당해준 유저 스택의 맨 밑 주소값보다 더 아래에 접근하면 page fault가 발생한다. 
-	이 page fault가 stack growth에 관련된 것인지 먼저 확인하는 과정을 추가한다.)
-	bogus가 아니라면 vm_do_claim_page() (페이지의 valid/invaild bit이 0이면, 즉 메모리 상에 존재하지 않으면 프레임에 메모리를 올리고 프레임과 페이지를 매핑시킨다.) 
-
-	Page Fault가 스택을 증가시키는 경우는 총 두 경우이다. */
-	// 1. 만약 폴트가 사용자 모드에서 발생하고, fault_addr이 f->rsp-8과 같거나 f->rsp보다 작다면, 
-	if (user && ((fault_addr == (f->rsp-8)) || (f->rsp < fault_addr))) {
-		if (fault_addr >= (USER_STACK - PGSIZE * 250) && (fault_addr < USER_STACK)) {
-		// 이어서 fault_addr이 특정 범위(USER_STACK - PGSIZE * 250에서 USER_STACK) 내에 있는지 확인. 
-		// 만약 그렇다면 vm_stack_growth 함수를 호출하여 스택 확장을 처리하고 성공을 나타내는 true를 반환.
-			vm_stack_growth(fault_addr);
-			return true;
-		}
-	}
-	// 2. 폴트가 사용자 모드가 아닌 경우, fault_addr이 curr->rsp_stack - 8과 같거나 curr->rsp_stack보다 작다면, 
-	else if (!user && ((fault_addr == (curr->rsp_stack - 8)) || (curr->rsp_stack < fault_addr))) {
-		// 코드는 이전과 동일한 범위 확인을 수행. fault_addr이 범위 내에 있는 경우 vm_stack_growth를 호출. 성공을 나타내는 true를 반환.
+	// 들어온 fault_addr이 rsp - 8 위치에 있거나, rsp
+	// user mode일 때 stack 영역에서 page fault가 발생한 경우
+	// addr 지점이 stack 영역에 해당되면, 그 지점
+	if (user && ((fault_addr == (f->rsp - 8)) || (f->rsp < fault_addr))) {
     	if (fault_addr >= (USER_STACK - PGSIZE * 250) && (fault_addr < USER_STACK)) {
-			vm_stack_growth(fault_addr);
-			return true;
-		}
+        	vm_stack_growth(fault_addr);
+        	return true;
+    	}
 	}
 
-	// spt에서 주소에 대한 page를 찾아 반환. 만약 NULL이라면 오류.
+	else if (!user && ((fault_addr == (curr->rsp_stack - 8)) || (curr->rsp_stack < fault_addr))) {
+		if (fault_addr >= (USER_STACK - PGSIZE * 250) && (fault_addr < USER_STACK))  {
+            vm_stack_growth(fault_addr);
+			return true;
+        }
+	}
+
 	page = spt_find_page(spt, pg_round_down(addr));
+	
 	if (page == NULL){
 		return false;
 	}
-
-	// 찾은 페이지가 아직 프레임과 매핑되어있지 않다면 vm_do_claim_page().
+	
 	if (page->frame == NULL){
 		/* The page has not been initialized yet */
 		// obtain the base address of the page containing the faulted virtual address
-		if (!vm_do_claim_page(page)) {
+		if (!vm_do_claim_page(page))
 			return false;
-		}
 	}
-	// vm_do_claim_page()이 성공적이었다면 즉 매핑을 완료했다면 반드시 페이지테이블(pml4)에 해당 주소가 담겨있어야!
-	if (pml4_get_page(thread_current()->pml4, pg_round_down(addr)) == NULL) {
+	if (pml4_get_page(thread_current()->pml4, addr) == NULL)
 		return false;
-	}
-
+	
 	if (!not_present)
 		return false;
+	
+	
+	/* TODO: Your code goes here */
 
-	return true; // page_fault()안에서 호출된 vm_try_handle_fault()는 성공적으로 수행을 완료하고 return true를 해줘야. 그래야 exception으로서의 page_fault()가 호출됐었던 그 위치로 돌아가게(return) 되니까~
+	return true;
 }
-
 /* Free the page.
  * DO NOT MODIFY THIS FUNCTION. */
 void
@@ -414,14 +494,6 @@ void spt_destroy_func(struct hash_elem *e, void *aux) {
 void supplemental_page_table_kill(struct supplemental_page_table *spt) {
     /* TODO: Destroy all the supplemental_page_table hold by thread */
     lock_acquire(&kill_lock);
-	// struct hash_iterator i;
-	// hash_first(&i, &spt->spt_hash);
-	// while (hash_next(&i)) { 
-	// 	struct page *parent_page = hash_entry (hash_cur (&i), struct page, spt_hash_elem); 
-	// 	if (parent_page->operations->type == VM_FILE) {
-	// 		do_munmap(parent_page->va);
-	// 	}
-	// }
 	hash_clear(&spt->spt_hash, spt_destroy_func); //project 3 - anonymous page 
     lock_release(&kill_lock);
     /* TODO: writeback all the modified contents to the storage. */

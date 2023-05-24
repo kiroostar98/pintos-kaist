@@ -195,7 +195,11 @@ disk_get (int chan_no, int dev_no) {
 }
 
 /* Returns the size of disk D, measured in DISK_SECTOR_SIZE-byte
-   sectors. */
+   sectors. */ 
+/*
+1 disk sector = 512 bytes
+8 disk sectors = 1 page = 4096 bytes
+*/
 disk_sector_t
 disk_size (struct disk *d) {
 	ASSERT (d != NULL);
