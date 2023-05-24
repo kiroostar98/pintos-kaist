@@ -80,6 +80,14 @@ static bool file_backed_swap_out (struct page *page) {
 static void
 file_backed_destroy (struct page *page) {
 	struct file_page *file_page UNUSED = &page->file;
+	struct container *aux = (struct container*) page->uninit.aux;
+
+	if (pml4_is_dirty(thread_current()->pml4, page->va)){
+		file_write_at(aux->file, page->va, aux->page_read_bytes, aux->offset);
+		pml4_set_dirty(thread_current()->pml4, page->va, 0);
+	}
+
+	pml4_clear_page(thread_current()->pml4, page->va);
 }
 
 /* Do the mmap */
