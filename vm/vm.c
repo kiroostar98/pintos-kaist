@@ -5,7 +5,7 @@
 #include "vm/inspect.h"
 #include "threads/vaddr.h"
 // #include "hash.h"
-// #include "include/userprog/process.h"
+#include "include/userprog/process.h"
 #include "threads/mmu.h"
 #define USER_STK_LIMIT (1 << 20)
 
@@ -171,6 +171,7 @@ static struct frame *vm_get_victim(void)
 		else
 			return victim;
 	}
+	
 	return victim;
 }
 
@@ -201,12 +202,14 @@ static struct frame *vm_get_frame(void)
 	   else 성공했다면 frame 구조체 커널 주소 멤버에 위에서 할당받은 메모리 커널 주소 넣기 */
 	if (frame->kva == NULL)
 	{
+		free(frame);
 		frame = vm_evict_frame();  // 수정!
 		frame->page = NULL; 
 
+
 		return frame;
 	}
-/* 새 프레임을 프레임 테이블에 넣어 관리한다. */
+	/* 새 프레임을 프레임 테이블에 넣어 관리한다. */
 	list_push_back (&frame_table, &frame->frame_elem);  
   
 	frame->page = NULL;
@@ -247,7 +250,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED, bool user U
 		if (USER_STACK - USER_STK_LIMIT <= rsp - 8 && rsp - 8 <= addr && addr <= USER_STACK) {
 			vm_stack_growth(addr);
 		}
-		
+
 		// spt에서 페이지를 찾는다.
 		page = spt_find_page(spt, addr);
 		if (page == NULL)
@@ -309,9 +312,9 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 /* Copy supplemental page table from src to dst */
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED, struct supplemental_page_table *src UNUSED) {
-	// 해시테이블을 순회하기 위해 필요한 구조체
+    // 해시테이블을 순회하기 위해 필요한 구조체
 	struct hash_iterator i;
-	/* 1. SRC의 해시 테이블의 각 bucket 내 elem들을 모두 복사한다. */
+    /* 1. SRC의 해시 테이블의 각 bucket 내 elem들을 모두 복사한다. */
 	hash_first(&i, &src->spt_hash);
 	while (hash_next(&i)){ // src의 각각의 페이지를 반복문을 통해 복사
 		struct page *parent_page = hash_entry (hash_cur (&i), struct page, spt_hash_elem);   // 현재 해시 테이블의 element 리턴
@@ -319,28 +322,28 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED, struct
     	void *upage = parent_page->va;				    		// 부모 페이지의 가상 주소
       	bool writable = parent_page->writable;				// 부모 페이지의 쓰기 가능 여부
       	vm_initializer *init = parent_page->uninit.init;	// 부모의 초기화되지 않은 페이지들 할당 위해 
-      	void* aux = parent_page->uninit.aux;
+        void* aux = parent_page->uninit.aux;
 
-		// 부모 타입이 uninit인 경우
-      	if(parent_page->operations->type == VM_UNINIT) { 
+        // 부모 타입이 uninit인 경우
+        if(parent_page->operations->type == VM_UNINIT) { 
         	if(!vm_alloc_page_with_initializer(type, upage, writable, init, aux))
 				// 자식 프로세스의 유저 메모리에 UNINIT 페이지를 하나 만들고 SPT 삽입.
             	return false;
-      	}
+        }
       	else {  // 즉, else문의 코드는 실제 부모의 물리메모리에 매핑되어있던 데이터는 없는상태이다 그래서 아래에서 memcpy로 부모의 데이터 또한 복사해 넣어준다.
         	if(!vm_alloc_page(type, upage, writable)) // type에 맞는 페이지 만들고 SPT 삽입.
             	return false;
           	if(!vm_claim_page(upage))  // 바로 물리 메모리와 매핑하고 Initialize한다.
               	return false;
-      	}
+        }
 
 		// UNIT이 아닌 모든 페이지에 대응하는 물리 메모리 데이터를 부모로부터 memcpy
       	if (parent_page->operations->type != VM_UNINIT) { 
         	struct page* child_page = spt_find_page(dst, upage);
           	memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE);
-      	}
-  	}
-  return true;	
+        }
+    }
+  return true;  
 }
 
 static void spt_destroy_func(struct hash_elem *e, void *aux) {
